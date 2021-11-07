@@ -1,0 +1,4 @@
+127.0.0.1:7878
+
+reverse_proxy /api/* localhost:7474
+reverse_proxy localhost:8080
