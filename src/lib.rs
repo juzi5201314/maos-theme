@@ -2,14 +2,16 @@
 #![feature(try_blocks)]
 
 use seed::app::{CmdHandle, Orders};
-use seed::browser::dom::event_handler::ev;
+
 use seed::virtual_dom::IntoNodes;
-use seed::virtual_dom::*;
-use seed::{button, div, log, nodes, plain, App, Url, C};
+
+use seed::{nodes, plain, App, Url};
 use wasm_bindgen::prelude::wasm_bindgen;
+use crate::fetch::post;
 
 mod fetch;
 mod pages;
+mod data_model;
 
 seed::struct_urls!();
 
@@ -39,18 +41,19 @@ struct Model {
 pub enum Msg {
     UrlChanged(seed::prelude::subs::UrlChanged),
 
-    Render(Option<Box<dyn ViewModel>>),
+    Render(Page),
+
+    LoginMsg(pages::login::Msg),
+    Logout
 }
 
-enum Page {
-    VM(Box<dyn ViewModel>),
+pub enum Page {
+    Index(pages::index::Model),
+    Post(pages::post::Model),
+    Login(pages::login::Model),
 
     Wait(Option<CmdHandle>),
     NotFound,
-}
-
-pub trait ViewModel {
-    fn view(&self) -> Vec<Node<Msg>>;
 }
 
 impl Page {
@@ -58,8 +61,9 @@ impl Page {
         Some(match url.next_hash_path_part() {
             None => pages::index::init(url, orders),
             Some("post") => pages::post::init(url, orders),
+            Some("login") => pages::login::init(url, orders),
             _ => {
-                orders.send_msg(Msg::Render(None));
+                orders.send_msg(Msg::Render(Page::NotFound));
                 return None;
             }
         })
@@ -68,42 +72,37 @@ impl Page {
 
 fn update(msg: Msg, model: &mut Model, orders: &mut impl Orders<Msg>) {
     match msg {
-        Msg::UrlChanged(seed::prelude::subs::UrlChanged(mut url)) => {
-            model.page = Page::Wait(Page::init(&mut url, orders));
+        Msg::UrlChanged(seed::prelude::subs::UrlChanged(mut url)) => model.page = Page::Wait(Page::init(&mut url, orders)),
+        Msg::Render(page) => model.page = page,
+
+        Msg::LoginMsg(msg) => {
+            if let Page::Login(model) = &mut model.page {
+                model.update(msg, orders)
+            }
         }
-        Msg::Render(Some(vm)) => model.page = Page::VM(vm),
-        Msg::Render(None) => model.page = Page::NotFound,
+        Msg::Logout => {
+            let url = model.base_url.clone();
+            orders.perform_cmd(async move {
+                #[derive(serde::Serialize, serde::Deserialize)]
+                struct Empty {}
+                post::<_, Empty>("/auth/logout", &Empty {}).await.unwrap();
+                Msg::UrlChanged(seed::prelude::subs::UrlChanged(url))
+            });
+        }
     }
 }
 
 fn view(model: &Model) -> impl IntoNodes<Msg> {
     nodes![
-        header(&model.base_url),
         match &model.page {
-            Page::VM(vm) => {
-                vm.view()
-            }
+            Page::Index(model) => model.view(),
+            Page::Post(model) => model.view(),
+            Page::Login(model) => model.view(),
             Page::NotFound => {
                 nodes![plain!("404")]
             }
             Page::Wait(_) => crate::pages::wait::view(),
         }
-    ]
-}
-
-fn header(base_url: &Url) -> Node<Msg> {
-    use seed::prelude::IndexMap;
-    use seed::virtual_dom::At;
-    use seed::{a, attrs, li, ul};
-    ul![
-        li![a![
-            attrs! { At::Href => Urls::new(base_url).index_url() },
-            "Home",
-        ]],
-        li![a![
-            attrs! { At::Href => Urls::new(base_url).post_url(11) },
-            "Post",
-        ]],
     ]
 }
 

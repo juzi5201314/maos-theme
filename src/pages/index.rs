@@ -1,51 +1,104 @@
-use seed::app::{Orders, CmdHandle};
-use seed::virtual_dom::Node;
-use seed::{plain, Url, nodes};
 
-use crate::{Msg, ViewModel};
-use chrono::NaiveDateTime;
+use seed::app::{CmdHandle, Orders};
+use seed::prelude::*;
+
+use seed::{a, article, attrs, div, document, h1, h2, h4, nodes, p, strong, Url, C, md};
+
+use crate::{Msg, Page};
+use crate::data_model::{SiteConfig, PostModel};
 
 pub struct Model {
-    raw_data: Data
+    raw_data: Data,
+    url: Url,
 }
 
-impl ViewModel for Model {
-    fn view(&self) -> Vec<Node<Msg>> {
+impl Model {
+    pub fn view(&self) -> Vec<Node<Msg>> {
+        let data = self.raw_data.clone();
+        document().set_title(&data.site.title);
         nodes![
-            plain!("index"),
-            plain!(format!("{:#?}", &self.raw_data))
+            div![
+                C!["uk-flex", "uk-heading-divider", "uk-flex-bottom"],
+                h1![C!["uk-heading-medium"], data.site.name],
+                h4![
+                    C!["uk-margin-right"],
+                    if data.logged {
+                        a![
+                            C!["uk-link-reset"],
+                            ev(Ev::Click, |_| Msg::Logout),
+                            strong!("logout")
+                        ]
+                    } else {
+                        a![
+                            C!["uk-link-reset"],
+                            attrs! {
+                                At::Href => self
+                                    .url
+                                    .to_hash_base_url()
+                                    .add_hash_path_part("login")
+                                    .to_string()
+                            },
+                            strong!("login")
+                        ]
+                    }
+                ]
+            ],
+            data.posts
+                .into_iter()
+                .map(|post| {
+                    article![
+                        h2![
+                            C!["uk-h2", "uk-heading-bullet"],
+                            a![
+                                C!["uk-link-reset"],
+                                attrs! {
+                                    At::Href => self
+                                        .url
+                                        .to_hash_base_url()
+                                        .add_hash_path_part("post")
+                                        .add_hash_path_part(post.id.to_string())
+                                        .to_string()
+                                },
+                                post.title
+                            ]
+                        ],
+                        p![
+                            C!["uk-article-meta"],
+                            post.create_time.format("%Y-%m-%d %H:%M").to_string()
+                        ],
+                        p![
+                            C!["post_content"],
+                            md!(&truncate(&post.content, 100))
+                        ]
+                    ]
+                })
+                .collect::<Vec<Node<Msg>>>()
         ]
     }
 }
 
-pub fn init(_url: &mut Url, orders: &mut impl Orders<Msg>) -> CmdHandle {
+pub fn init(url: &mut Url, orders: &mut impl Orders<Msg>) -> CmdHandle {
+    let url = url.clone();
     orders.perform_cmd_with_handle(async move {
         let data = crate::fetch::get::<Data>("/api").await.unwrap();
-        Msg::Render(Some(box Model {
-            raw_data: data
+        Msg::Render(Page::Index(Model {
+            url,
+            raw_data: data,
         }))
     })
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+fn truncate(s: &str, max: usize) -> String {
+    match s.char_indices().nth(max) {
+        None => s.to_owned(),
+        Some((idx, _)) => format!("{} ...", &s[..idx]),
+    }
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub struct Data {
     site: SiteConfig,
     logged: bool,
     posts: Vec<PostModel>,
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct SiteConfig {
-    name: String,
-    title: String,
-}
-
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct PostModel {
-    pub id: u32,
-    pub title: String,
-    pub content: String,
-
-    pub create_time: NaiveDateTime,
-    pub last_modified_time: NaiveDateTime,
-}
